@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Real-Time Clipboard Receiver</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      body {
+        font-family: "Inter", sans-serif;
+        background-color: #f3f4f6;
+      }
+      .toast {
+        visibility: hidden;
+        min-width: 250px;
+        background-color: #333;
+        color: #fff;
+        text-align: center;
+        border-radius: 8px;
+        padding: 16px;
+        position: fixed;
+        z-index: 1;
+        left: 50%;
+        transform: translateX(-50%);
+        bottom: 30px;
+        opacity: 0;
+        transition: opacity 0.5s, visibility 0.5s;
+      }
+      .toast.show {
+        visibility: visible;
+        opacity: 1;
+      }
+    </style>
+  </head>
+  <body class="flex items-center justify-center min-h-screen">
+    <div class="w-full max-w-2xl mx-auto bg-white rounded-2xl shadow-lg p-8">
+      <div class="text-center">
+        <h1 class="text-3xl font-bold text-gray-800">Clipboard Receiver</h1>
+        <p class="text-gray-500 mt-2">
+          Connect to a channel to receive text copied from your other device.
+        </p>
+      </div>
+
+      <!-- Connection State -->
+      <div id="connection-form" class="mt-8">
+        <label for="channel-id" class="block text-sm font-medium text-gray-700"
+          >Channel ID</label
+        >
+        <div class="mt-1 flex rounded-md shadow-sm">
+          <input
+            type="text"
+            id="channel-id"
+            class="flex-1 block w-full rounded-none rounded-l-md border-gray-300 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm px-3 py-2"
+            placeholder="your-secret-channel-name"
+          />
+          <button
+            id="connect-btn"
+            class="inline-flex items-center px-4 py-2 border border-l-0 border-gray-300 bg-gray-50 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-r-md"
+          >
+            Connect
+          </button>
+        </div>
+        <p class="text-xs text-gray-500 mt-2">
+          Use the same secret ID here and in the Mac script.
+        </p>
+      </div>
+
+      <!-- Display State -->
+      <div id="display-area" class="hidden mt-6">
+        <div class="flex justify-between items-center">
+          <div>
+            <p class="text-sm text-gray-500">Connected to channel:</p>
+            <p id="connected-channel" class="font-semibold text-indigo-600"></p>
+          </div>
+          <p id="status" class="text-sm font-medium px-3 py-1 rounded-full"></p>
+        </div>
+        <div
+          class="mt-4 p-4 bg-gray-50 rounded-lg border border-gray-200 min-h-[200px] relative"
+        >
+          <pre
+            id="clipboard-content"
+            class="whitespace-pre-wrap break-words text-gray-800"
+          >
+Waiting for a new clip...</pre
+          >
+          <button
+            id="copy-btn"
+            class="absolute top-3 right-3 bg-indigo-600 text-white px-3 py-1.5 text-xs font-semibold rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-opacity opacity-0"
+          >
+            Copy Text
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div id="toast" class="toast">Text copied to clipboard!</div>
+
+    <!-- Firebase SDK -->
+    <script type="module">
+      // IMPORTANT: Replace this with your own Firebase project configuration!
+      // See README.md for instructions on how to get this.
+      const firebaseConfig = {
+        apiKey: "AIzaSyAbouQNGZUzvujmBfn7U-msTwHX_46GFgQ",
+        authDomain: "clipboard-sharer-2d63c.firebaseapp.com",
+        projectId: "clipboard-sharer-2d63c",
+        storageBucket: "clipboard-sharer-2d63c.firebasestorage.app",
+        messagingSenderId: "168881908781",
+        appId: "1:168881908781:web:e537982871fc151f531ca4",
+      };
+
+      // Don't edit below this line
+      // ----------------------------------------------------
+
+      import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+      import {
+        getFirestore,
+        doc,
+        onSnapshot,
+      } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+      import {
+        getAuth,
+        signInAnonymously,
+      } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+
+      const connectBtn = document.getElementById("connect-btn");
+      const channelInput = document.getElementById("channel-id");
+      const connectionForm = document.getElementById("connection-form");
+      const displayArea = document.getElementById("display-area");
+      const clipboardContent = document.getElementById("clipboard-content");
+      const connectedChannel = document.getElementById("connected-channel");
+      const statusEl = document.getElementById("status");
+      const copyBtn = document.getElementById("copy-btn");
+      const toast = document.getElementById("toast");
+
+      let unsubscribe; // To hold the listener function
+
+      connectBtn.addEventListener("click", async () => {
+        const channelId = channelInput.value.trim();
+        if (!channelId) {
+          alert("Please enter a Channel ID.");
+          return;
+        }
+        if (firebaseConfig.projectId === "YOUR_PROJECT_ID") {
+          alert(
+            "Please configure your Firebase project details in the HTML file first!"
+          );
+          return;
+        }
+
+        try {
+          // Initialize Firebase
+          const app = initializeApp(firebaseConfig);
+          const db = getFirestore(app);
+          const auth = getAuth(app);
+
+          // Sign in anonymously to satisfy security rules
+          await signInAnonymously(auth);
+
+          connectionForm.classList.add("hidden");
+          displayArea.classList.remove("hidden");
+          connectedChannel.textContent = channelId;
+          updateStatus("connecting", "Connecting...");
+
+          const docRef = doc(db, "clipboards", channelId);
+
+          unsubscribe = onSnapshot(
+            docRef,
+            (docSnap) => {
+              if (docSnap.exists()) {
+                const data = docSnap.data();
+                clipboardContent.textContent = data.text;
+                updateStatus("received", "New clip received!");
+                copyBtn.classList.remove("opacity-0");
+              } else {
+                clipboardContent.textContent =
+                  "Waiting for the first clip from your Mac...";
+                updateStatus("waiting", "Listening...");
+              }
+            },
+            (error) => {
+              console.error("Error listening to document:", error);
+              updateStatus("error", "Connection Error");
+            }
+          );
+        } catch (error) {
+          console.error("Firebase connection failed:", error);
+          alert(
+            "Could not connect to Firebase. Check your configuration and console for errors."
+          );
+          connectionForm.classList.remove("hidden");
+          displayArea.classList.add("hidden");
+        }
+      });
+
+      copyBtn.addEventListener("click", () => {
+        const textToCopy = clipboardContent.textContent;
+
+        // Using a textarea element for robust copying
+        const textArea = document.createElement("textarea");
+        textArea.value = textToCopy;
+        document.body.appendChild(textArea);
+        textArea.select();
+        try {
+          document.execCommand("copy");
+          showToast();
+        } catch (err) {
+          console.error("Failed to copy text: ", err);
+          alert("Failed to copy text. Please try manually.");
+        }
+        document.body.removeChild(textArea);
+      });
+
+      function updateStatus(type, message) {
+        statusEl.textContent = message;
+        statusEl.className = "text-sm font-medium px-3 py-1 rounded-full "; // reset
+        switch (type) {
+          case "connecting":
+            statusEl.classList.add("bg-yellow-100", "text-yellow-800");
+            break;
+          case "waiting":
+            statusEl.classList.add("bg-blue-100", "text-blue-800");
+            break;
+          case "received":
+            statusEl.classList.add("bg-green-100", "text-green-800");
+            break;
+          case "error":
+            statusEl.classList.add("bg-red-100", "text-red-800");
+            break;
+        }
+      }
+
+      function showToast() {
+        toast.classList.add("show");
+        setTimeout(() => {
+          toast.classList.remove("show");
+        }, 3000);
+      }
+    </script>
+  </body>
+</html>
