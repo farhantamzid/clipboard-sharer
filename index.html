@@ -95,6 +95,38 @@ Waiting for a new clip...</pre
           </button>
         </div>
       </div>
+
+      <!-- Sender State -->
+      <div id="sender-area" class="hidden mt-6">
+        <label for="send-text" class="block text-sm font-medium text-gray-700">
+          Send text to channel
+        </label>
+        <div class="mt-1">
+          <textarea
+            id="send-text"
+            rows="6"
+            class="block w-full rounded-md border-gray-300 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm px-3 py-2"
+            placeholder="Paste or type text here..."
+          ></textarea>
+        </div>
+        <div class="mt-2 flex gap-2">
+          <button
+            id="paste-btn"
+            class="inline-flex items-center px-3 py-2 bg-gray-100 text-sm font-medium text-gray-700 rounded-md border border-gray-300 hover:bg-gray-200"
+          >
+            Paste from clipboard
+          </button>
+          <button
+            id="send-btn"
+            class="inline-flex items-center px-4 py-2 bg-indigo-600 text-white text-sm font-semibold rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+          >
+            Send
+          </button>
+        </div>
+        <p class="text-xs text-gray-500 mt-2">
+          Tip: "Paste from clipboard" requires HTTPS and browser permission.
+        </p>
+      </div>
     </div>
 
     <div id="toast" class="toast">Text copied to clipboard!</div>
@@ -120,6 +152,8 @@ Waiting for a new clip...</pre
         getFirestore,
         doc,
         onSnapshot,
+        setDoc,
+        serverTimestamp,
       } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
       import {
         getAuth,
@@ -135,8 +169,13 @@ Waiting for a new clip...</pre
       const statusEl = document.getElementById("status");
       const copyBtn = document.getElementById("copy-btn");
       const toast = document.getElementById("toast");
+      const senderArea = document.getElementById("sender-area");
+      const sendText = document.getElementById("send-text");
+      const sendBtn = document.getElementById("send-btn");
+      const pasteBtn = document.getElementById("paste-btn");
 
       let unsubscribe; // To hold the listener function
+      let currentDocRef; // Active channel document reference
 
       connectBtn.addEventListener("click", async () => {
         const channelId = channelInput.value.trim();
@@ -166,6 +205,7 @@ Waiting for a new clip...</pre
           updateStatus("connecting", "Connecting...");
 
           const docRef = doc(db, "clipboards", channelId);
+          currentDocRef = docRef;
 
           unsubscribe = onSnapshot(
             docRef,
@@ -186,6 +226,9 @@ Waiting for a new clip...</pre
               updateStatus("error", "Connection Error");
             }
           );
+
+          // Reveal sender UI once connected
+          senderArea.classList.remove("hidden");
         } catch (error) {
           console.error("Firebase connection failed:", error);
           alert(
@@ -206,12 +249,56 @@ Waiting for a new clip...</pre
         textArea.select();
         try {
           document.execCommand("copy");
-          showToast();
+          showToast("Text copied to clipboard!");
         } catch (err) {
           console.error("Failed to copy text: ", err);
           alert("Failed to copy text. Please try manually.");
         }
         document.body.removeChild(textArea);
+      });
+
+      // Send text from web app to the channel
+      sendBtn.addEventListener("click", async () => {
+        const text = sendText.value;
+        if (!text || !text.trim()) {
+          alert("Please paste or type some text first.");
+          return;
+        }
+        if (!currentDocRef) {
+          alert("Please connect to a channel first.");
+          return;
+        }
+        try {
+          await setDoc(
+            currentDocRef,
+            { text: text, updatedAt: serverTimestamp() },
+            { merge: true }
+          );
+          updateStatus("received", "Text sent");
+          showToast("Text sent!");
+        } catch (err) {
+          console.error("Failed to send text:", err);
+          updateStatus("error", "Send failed");
+          alert("Failed to send text. Check console for details.");
+        }
+      });
+
+      // Paste from system clipboard into the textarea (requires HTTPS)
+      pasteBtn.addEventListener("click", async () => {
+        try {
+          const text = await navigator.clipboard.readText();
+          if (text) {
+            sendText.value = text;
+            showToast("Pasted from clipboard");
+          } else {
+            alert("Clipboard is empty.");
+          }
+        } catch (err) {
+          console.error("Clipboard read failed:", err);
+          alert(
+            "Unable to read clipboard. Grant permissions or paste manually."
+          );
+        }
       });
 
       function updateStatus(type, message) {
@@ -233,7 +320,10 @@ Waiting for a new clip...</pre
         }
       }
 
-      function showToast() {
+      function showToast(message) {
+        if (message) {
+          toast.textContent = message;
+        }
         toast.classList.add("show");
         setTimeout(() => {
           toast.classList.remove("show");
