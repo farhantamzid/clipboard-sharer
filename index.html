@@ -87,6 +87,10 @@
           >
 Waiting for a new clip...</pre
           >
+          <img
+            id="clipboard-image"
+            class="hidden max-h-80 rounded-md mx-auto"
+          />
           <button
             id="copy-btn"
             class="absolute top-3 right-3 bg-indigo-600 text-white px-3 py-1.5 text-xs font-semibold rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-opacity opacity-0"
@@ -125,6 +129,7 @@ Waiting for a new clip...</pre
         </div>
         <p class="text-xs text-gray-500 mt-2">
           Tip: "Paste from clipboard" requires HTTPS and browser permission.
+          You can also paste an image (Ctrl+V) anywhere on this page to send it.
         </p>
       </div>
     </div>
@@ -165,6 +170,7 @@ Waiting for a new clip...</pre
       const connectionForm = document.getElementById("connection-form");
       const displayArea = document.getElementById("display-area");
       const clipboardContent = document.getElementById("clipboard-content");
+      const clipboardImage = document.getElementById("clipboard-image");
       const connectedChannel = document.getElementById("connected-channel");
       const statusEl = document.getElementById("status");
       const copyBtn = document.getElementById("copy-btn");
@@ -212,12 +218,34 @@ Waiting for a new clip...</pre
             (docSnap) => {
               if (docSnap.exists()) {
                 const data = docSnap.data();
-                clipboardContent.textContent = data.text;
-                updateStatus("received", "New clip received!");
-                copyBtn.classList.remove("opacity-0");
+                if (data.type === "image" && data.image) {
+                  clipboardImage.src = `data:image/png;base64,${data.image}`;
+                  clipboardImage.classList.remove("hidden");
+                  clipboardContent.classList.add("hidden");
+                  copyBtn.textContent = "Copy Image";
+                  updateStatus("received", "Image received!");
+                  copyBtn.classList.remove("opacity-0");
+                } else if (data.text) {
+                  clipboardContent.textContent = data.text;
+                  clipboardContent.classList.remove("hidden");
+                  clipboardImage.classList.add("hidden");
+                  copyBtn.textContent = "Copy Text";
+                  updateStatus("received", "New clip received!");
+                  copyBtn.classList.remove("opacity-0");
+                } else {
+                  clipboardContent.textContent =
+                    "Waiting for the first clip from your Mac...";
+                  clipboardContent.classList.remove("hidden");
+                  clipboardImage.classList.add("hidden");
+                  copyBtn.classList.add("opacity-0");
+                  updateStatus("waiting", "Listening...");
+                }
               } else {
                 clipboardContent.textContent =
                   "Waiting for the first clip from your Mac...";
+                clipboardContent.classList.remove("hidden");
+                clipboardImage.classList.add("hidden");
+                copyBtn.classList.add("opacity-0");
                 updateStatus("waiting", "Listening...");
               }
             },
@@ -239,22 +267,36 @@ Waiting for a new clip...</pre
         }
       });
 
-      copyBtn.addEventListener("click", () => {
-        const textToCopy = clipboardContent.textContent;
+      copyBtn.addEventListener("click", async () => {
+        if (!clipboardImage.classList.contains("hidden")) {
+          try {
+            const res = await fetch(clipboardImage.src);
+            const blob = await res.blob();
+            await navigator.clipboard.write([
+              new ClipboardItem({ [blob.type]: blob }),
+            ]);
+            showToast("Image copied to clipboard!");
+          } catch (err) {
+            console.error("Failed to copy image: ", err);
+            alert("Failed to copy image. Please try manually.");
+          }
+        } else {
+          const textToCopy = clipboardContent.textContent;
 
-        // Using a textarea element for robust copying
-        const textArea = document.createElement("textarea");
-        textArea.value = textToCopy;
-        document.body.appendChild(textArea);
-        textArea.select();
-        try {
-          document.execCommand("copy");
-          showToast("Text copied to clipboard!");
-        } catch (err) {
-          console.error("Failed to copy text: ", err);
-          alert("Failed to copy text. Please try manually.");
+          // Using a textarea element for robust copying
+          const textArea = document.createElement("textarea");
+          textArea.value = textToCopy;
+          document.body.appendChild(textArea);
+          textArea.select();
+          try {
+            document.execCommand("copy");
+            showToast("Text copied to clipboard!");
+          } catch (err) {
+            console.error("Failed to copy text: ", err);
+            alert("Failed to copy text. Please try manually.");
+          }
+          document.body.removeChild(textArea);
         }
-        document.body.removeChild(textArea);
       });
 
       // Send text from web app to the channel
@@ -271,7 +313,7 @@ Waiting for a new clip...</pre
         try {
           await setDoc(
             currentDocRef,
-            { text: text, updatedAt: serverTimestamp() },
+            { text: text, type: "text", updatedAt: serverTimestamp() },
             { merge: true }
           );
           updateStatus("received", "Text sent");
@@ -298,6 +340,37 @@ Waiting for a new clip...</pre
           alert(
             "Unable to read clipboard. Grant permissions or paste manually."
           );
+        }
+      });
+
+      // Handle pasting images from clipboard
+      document.addEventListener("paste", async (e) => {
+        if (!currentDocRef || !e.clipboardData) return;
+        const items = e.clipboardData.items;
+        for (const item of items) {
+          if (item.type.startsWith("image/")) {
+            e.preventDefault();
+            const blob = item.getAsFile();
+            const reader = new FileReader();
+            reader.onload = async () => {
+              const base64 = reader.result.split(",")[1];
+              try {
+                await setDoc(
+                  currentDocRef,
+                  { image: base64, type: "image", updatedAt: serverTimestamp() },
+                  { merge: true }
+                );
+                updateStatus("received", "Image sent");
+                showToast("Image sent!");
+              } catch (err) {
+                console.error("Failed to send image:", err);
+                updateStatus("error", "Send failed");
+                alert("Failed to send image. Check console for details.");
+              }
+            };
+            reader.readAsDataURL(blob);
+            return;
+          }
         }
       });
 

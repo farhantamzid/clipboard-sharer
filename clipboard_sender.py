@@ -1,7 +1,11 @@
 import time
+import json
+import base64
+from io import BytesIO
+
 import pyperclip
 import requests
-import json
+from PIL import ImageGrab, Image
 
 # --- CONFIGURATION ---
 # 1. Get this from your Firebase project settings (see README)
@@ -11,34 +15,47 @@ FIREBASE_PROJECT_ID = "clipboard-sharer-2d63c"
 CHANNEL_ID = "farhan"
 # ---------------------
 
-# Firestore REST API endpoint for our specific document.
-# The `?updateMask.fieldPaths=text` part ensures we only update the 'text' field.
-FIRESTORE_URL = f"https://firestore.googleapis.com/v1/projects/{FIREBASE_PROJECT_ID}/databases/(default)/documents/clipboards/{CHANNEL_ID}?updateMask.fieldPaths=text"
+# Base Firestore REST API endpoint for our specific document.
+FIRESTORE_BASE_URL = (
+    f"https://firestore.googleapis.com/v1/projects/{FIREBASE_PROJECT_ID}/"
+    f"databases/(default)/documents/clipboards/{CHANNEL_ID}"
+)
 
-def update_firestore(text):
-    """Sends the provided text to the Firestore document."""
+def update_firestore(field, value):
+    """Sends the provided text or image to the Firestore document."""
 
-    # The data needs to be in a specific format for the Firestore REST API.
-    payload = {
-        "fields": {
-            "text": {
-                "stringValue": text
-            }
-        }
-    }
+    payload = {"fields": {field: {"stringValue": value}, "type": {"stringValue": field}}}
 
-    headers = {
-        "Content-Type": "application/json"
-    }
+    headers = {"Content-Type": "application/json"}
+
+    url = f"{FIRESTORE_BASE_URL}?updateMask.fieldPaths={field}&updateMask.fieldPaths=type"
 
     try:
-        # We use PATCH to create the document or update it if it already exists.
-        response = requests.patch(FIRESTORE_URL, headers=headers, data=json.dumps(payload))
+        response = requests.patch(url, headers=headers, data=json.dumps(payload))
         response.raise_for_status()  # Raise an exception for bad status codes (4xx or 5xx)
         print(f"[{time.strftime('%H:%M:%S')}] Successfully sent clipboard content.")
     except requests.exceptions.RequestException as e:
-        print(f"Error: Could not connect to Firestore. Check your Project ID and network connection.")
+        print("Error: Could not connect to Firestore. Check your Project ID and network connection.")
         print(f"Details: {e}")
+
+
+def read_clipboard():
+    """Returns ('text', value) or ('image', base64) if clipboard has content."""
+    try:
+        img = ImageGrab.grabclipboard()
+        if isinstance(img, Image.Image):
+            buffer = BytesIO()
+            img.save(buffer, format="PNG")
+            img_b64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
+            return "image", img_b64
+    except Exception:
+        pass
+
+    text = pyperclip.paste()
+    if text:
+        return "text", text
+
+    return None, None
 
 def main():
     """Main loop to monitor the clipboard."""
@@ -52,16 +69,18 @@ def main():
     print(f"Channel ID: {CHANNEL_ID}")
     print("Press Ctrl+C to stop.")
 
-    recent_value = ""
+    recent = {"text": "", "image": ""}
     try:
         while True:
             # Get the current content of the clipboard.
-            clipboard_value = pyperclip.paste()
+            field, value = read_clipboard()
 
             # If the content is new and not empty, send it.
-            if clipboard_value and clipboard_value != recent_value:
-                recent_value = clipboard_value
-                update_firestore(clipboard_value)
+            if field and value and value != recent[field]:
+                recent[field] = value
+                other = "image" if field == "text" else "text"
+                recent[other] = ""
+                update_firestore(field, value)
 
             # Wait for a second before checking again to avoid high CPU usage.
             time.sleep(1)
