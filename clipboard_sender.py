@@ -21,6 +21,23 @@ FIRESTORE_BASE_URL = (
     f"databases/(default)/documents/clipboards/{CHANNEL_ID}"
 )
 
+# Firestore documents have a hard 1 MiB limit. Keep images well under this.
+MAX_BASE64_SIZE = 900_000
+
+
+def compress_image_to_base64(img):
+    """Compresses the image to JPEG and returns base64 str within size limit."""
+    quality = 85
+    while quality >= 20:
+        buffer = BytesIO()
+        # Convert to RGB in case image has alpha channel
+        img.convert("RGB").save(buffer, format="JPEG", quality=quality, optimize=True)
+        b64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
+        if len(b64) <= MAX_BASE64_SIZE:
+            return b64
+        quality -= 15
+    return None
+
 def update_firestore(field, value):
     """Sends the provided text or image to the Firestore document."""
 
@@ -44,10 +61,13 @@ def read_clipboard():
     try:
         img = ImageGrab.grabclipboard()
         if isinstance(img, Image.Image):
-            buffer = BytesIO()
-            img.save(buffer, format="PNG")
-            img_b64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
-            return "image", img_b64
+            img_b64 = compress_image_to_base64(img)
+            if img_b64:
+                return "image", img_b64
+            else:
+                print(
+                    "Image too large to send after compression. Skipping upload."
+                )
     except Exception:
         pass
 

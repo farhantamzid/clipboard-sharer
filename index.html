@@ -219,7 +219,7 @@ Waiting for a new clip...</pre
               if (docSnap.exists()) {
                 const data = docSnap.data();
                 if (data.type === "image" && data.image) {
-                  clipboardImage.src = `data:image/png;base64,${data.image}`;
+                  clipboardImage.src = `data:image/jpeg;base64,${data.image}`;
                   clipboardImage.classList.remove("hidden");
                   clipboardContent.classList.add("hidden");
                   copyBtn.textContent = "Copy Image";
@@ -351,9 +351,23 @@ Waiting for a new clip...</pre
           if (item.type.startsWith("image/")) {
             e.preventDefault();
             const blob = item.getAsFile();
-            const reader = new FileReader();
-            reader.onload = async () => {
-              const base64 = reader.result.split(",")[1];
+            const img = new Image();
+            img.onload = async () => {
+              const canvas = document.createElement("canvas");
+              canvas.width = img.width;
+              canvas.height = img.height;
+              const ctx = canvas.getContext("2d");
+              ctx.drawImage(img, 0, 0);
+              let quality = 0.8;
+              let base64 = canvas.toDataURL("image/jpeg", quality).split(",")[1];
+              while (base64.length > 900000 && quality > 0.2) {
+                quality -= 0.15;
+                base64 = canvas.toDataURL("image/jpeg", quality).split(",")[1];
+              }
+              if (base64.length > 900000) {
+                alert("Image too large to send (must be under 1MB).");
+                return;
+              }
               try {
                 await setDoc(
                   currentDocRef,
@@ -368,7 +382,7 @@ Waiting for a new clip...</pre
                 alert("Failed to send image. Check console for details.");
               }
             };
-            reader.readAsDataURL(blob);
+            img.src = URL.createObjectURL(blob);
             return;
           }
         }
